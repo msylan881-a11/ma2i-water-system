@@ -1,0 +1,695 @@
+*** Begin Patch
+*** Add File: ma2i-secure-save-recovery.patch
++diff --git a/app/src/main/java/com/ma2i/water/util/safesave/SafeSaveHelper.kt b/app/src/main/java/com/ma2i/water/util/safesave/SafeSaveHelper.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/util/safesave/SafeSaveHelper.kt
++@@ -0,0 +1,64 @@
+++package com.ma2i.water.util.safesave
+++
+++import kotlinx.coroutines.CoroutineScope
+++import kotlinx.coroutines.Dispatchers
+++import kotlinx.coroutines.withContext
+++import kotlinx.coroutines.launch
+++
+++/**
+++ * Wrapper for performing save operations safely.
+++ * Usage (in a ViewModel or Activity with lifecycleScope):
+++ *
+++ * safeSave(
+++ *   scope = lifecycleScope,
+++ *   dbSave = { dao.insert(sale) },
+++ *   fileSave = { backupManager.maybeAutoBackup() },
+++ *   onSuccess = { showToast("تم الحفظ بنجاح"); navigateBack() },
+++ *   onError = { e -> showErrorDialog(e) }
+++ * )
+++ */
+++object SafeSaveHelper {
+++    /**
+++     * Perform dbSave and optional fileSave on IO dispatcher.
+++     * Ensures any exception is propagated to onError (so UI won't show success prematurely).
+++     */
+++    fun safeSave(
+++        scope: CoroutineScope,
+++        dbSave: suspend () -> Unit,
+++        fileSave: (suspend () -> Unit)? = null,
+++        onSuccess: () -> Unit = {},
+++        onError: (Throwable) -> Unit = {}
+++    ) {
+++        scope.launch {
+++            try {
+++                withContext(Dispatchers.IO) {
+++                    // dbSave should handle Room transactions itself if needed
+++                    dbSave()
+++                    // optional additional IO step (e.g., auto-backup)
+++                    fileSave?.invoke()
+++                }
+++                // back to Main thread
+++                onSuccess()
+++            } catch (t: Throwable) {
+++                onError(t)
+++            }
+++        }
+++    }
+++}
++
++diff --git a/app/src/main/java/com/ma2i/water/security/PasswordUtils.kt b/app/src/main/java/com/ma2i/water/security/PasswordUtils.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/security/PasswordUtils.kt
++@@ -0,0 +1,58 @@
+++package com.ma2i.water.security
+++
+++import android.util.Base64
+++import java.security.SecureRandom
+++import javax.crypto.SecretKeyFactory
+++import javax.crypto.spec.PBEKeySpec
+++
+++object PasswordUtils {
+++    private const val ITERATIONS = 120_000
+++    private const val KEY_LENGTH = 256 // bits
+++    private const val SALT_LENGTH = 16 // bytes
+++    private val secureRandom = SecureRandom()
+++
+++    fun generateSalt(): ByteArray {
+++        val salt = ByteArray(SALT_LENGTH)
+++        secureRandom.nextBytes(salt)
+++        return salt
+++    }
+++
+++    fun hashPassword(password: CharArray, salt: ByteArray): String {
+++        val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_LENGTH)
+++        val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+++        val key = skf.generateSecret(spec).encoded
+++        return Base64.encodeToString(key, Base64.NO_WRAP)
+++    }
+++
+++    fun verifyPassword(inputPassword: CharArray, storedHashBase64: String, salt: ByteArray): Boolean {
+++        val inputHash = hashPassword(inputPassword, salt)
+++        return slowEquals(inputHash.toByteArray(), storedHashBase64.toByteArray())
+++    }
+++
+++    // Prevent timing attacks
+++    private fun slowEquals(a: ByteArray, b: ByteArray): Boolean {
+++        var diff = a.size xor b.size
+++        val len = minOf(a.size, b.size)
+++        for (i in 0 until len) {
+++            diff = diff or (a[i].toInt() xor b[i].toInt())
+++        }
+++        return diff == 0
+++    }
+++}
++
++diff --git a/app/src/main/java/com/ma2i/water/backup/BackupCrypto.kt b/app/src/main/java/com/ma2i/water/backup/BackupCrypto.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/backup/BackupCrypto.kt
++ @@ -0,0 +1,81 @@
+++package com.ma2i.water.backup
+++
+++import java.security.SecureRandom
+++import javax.crypto.Cipher
+++import javax.crypto.SecretKey
+++import javax.crypto.SecretKeyFactory
+++import javax.crypto.spec.GCMParameterSpec
+++import javax.crypto.spec.PBEKeySpec
+++import javax.crypto.spec.SecretKeySpec
+++import android.util.Base64
+++
+++object BackupCrypto {
+++    private const val AES_MODE = "AES/GCM/NoPadding"
+++    private const val IV_SIZE = 12
+++    private const val TAG_BIT_LENGTH = 128
+++    private const val ITERATIONS = 120_000
+++    private const val KEY_SIZE = 256 // bits
+++    private val secureRandom = SecureRandom()
+++
+++    fun deriveKey(password: CharArray, salt: ByteArray): SecretKey {
+++        val spec = PBEKeySpec(password, salt, ITERATIONS, KEY_SIZE)
+++        val skf = SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256")
+++        val keyBytes = skf.generateSecret(spec).encoded
+++        return SecretKeySpec(keyBytes, "AES")
+++    }
+++
+++    /**
+++     * Encrypts plain bytes and returns: base64(iv + ciphertext)
+++     * Caller should store salt (base64) and the returned base64 cipher text together in a wrapper JSON:
+++     * { "version":1, "salt":"...", "payload":"..." }
+++     */
+++    fun encryptToBase64(plain: ByteArray, key: SecretKey): String {
+++        val cipher = Cipher.getInstance(AES_MODE)
+++        val iv = ByteArray(IV_SIZE).also { secureRandom.nextBytes(it) }
+++        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(TAG_BIT_LENGTH, iv))
+++        val cipherBytes = cipher.doFinal(plain)
+++        val result = iv + cipherBytes
+++        return Base64.encodeToString(result, Base64.NO_WRAP)
+++    }
+++
+++    /**
+++     * Decrypt from base64(iv + ciphertext)
+++     * Throws exception on failure (invalid tag / wrong password).
+++     */
+++    fun decryptFromBase64(dataBase64: String, key: SecretKey): ByteArray {
+++        val data = Base64.decode(dataBase64, Base64.NO_WRAP)
+++        if (data.size < IV_SIZE) throw IllegalArgumentException("Invalid data")
+++        val iv = data.copyOfRange(0, IV_SIZE)
+++        val cipherBytes = data.copyOfRange(IV_SIZE, data.size)
+++        val cipher = Cipher.getInstance(AES_MODE)
+++        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(TAG_BIT_LENGTH, iv))
+++        return cipher.doFinal(cipherBytes)
+++    }
+++
+++    fun generateSalt(length: Int = 16): ByteArray {
+++        val salt = ByteArray(length)
+++        secureRandom.nextBytes(salt)
+++        return salt
+++    }
+++}
++
++diff --git a/app/src/main/java/com/ma2i/water/ui/recovery/RecoveryActivity.kt b/app/src/main/java/com/ma2i/water/ui/recovery/RecoveryActivity.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/ui/recovery/RecoveryActivity.kt
++ @@ -0,0 +1,99 @@
+++package com.ma2i.water.ui.recovery
+++
+++import android.app.Activity
+++import android.content.Intent
+++import android.os.Bundle
+++import android.widget.Button
+++import android.widget.TextView
+++import androidx.appcompat.app.AlertDialog
+++import androidx.appcompat.app.AppCompatActivity
+++import com.ma2i.water.R
+++
+++/**
+++ * A simple Recovery screen that explains the problem and offers actions:
+++ * - Restore from backup (launch file picker)
+++ * - Try another password (open password prompt)
+++ * - Export current file for analysis (share)
+++ *
+++ * Integrate the actual import/restore logic where noted.
+++ */
+++class RecoveryActivity : AppCompatActivity() {
+++
+++    override fun onCreate(savedInstanceState: Bundle?) {
+++        super.onCreate(savedInstanceState)
+++        // Create a simple layout or reuse existing layout: res/layout/activity_recovery.xml
+++        setContentView(R.layout.activity_recovery)
+++
+++        val titleTv = findViewById<TextView>(R.id.recoveryTitle)
+++        val descTv = findViewById<TextView>(R.id.recoveryDesc)
+++        val restoreBtn = findViewById<Button>(R.id.recoveryRestoreBtn)
+++        val tryPwdBtn = findViewById<Button>(R.id.recoveryTryPwdBtn)
+++        val exportBtn = findViewById<Button>(R.id.recoveryExportBtn)
+++
+++        titleTv.text = "تعذّر قراءة بيانات التطبيق"
+++        descTv.text = "قد تكون النسخة المحلية تالفة أو كلمة السر غير صحيحة. يمكنك استعادة نسخة احتياطية أو تجربة كلمة سر مختلفة."
+++
+++        restoreBtn.setOnClickListener {
+++            // Launch a file picker for the user to select backup file
+++            // Example: use ACTION_OPEN_DOCUMENT with mime type application/json or your custom extension
+++            launchBackupPicker()
+++        }
+++
+++        tryPwdBtn.setOnClickListener {
+++            // Show a password entry dialog (implement your dialog)
+++            showPasswordPrompt()
+++        }
+++
+++        exportBtn.setOnClickListener {
+++            // Export current damaged file for analysis (share as attachment)
+++            exportCurrentFileForAnalysis()
+++        }
+++    }
+++
+++    private fun launchBackupPicker() {
+++        // Implement actual file picker. Example (pseudo):
+++        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+++            addCategory(Intent.CATEGORY_OPENABLE)
+++            type = "*/*"
+++        }
+++        startActivityForResult(intent, REQUEST_CODE_PICK_BACKUP)
+++    }
+++
+++    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+++        super.onActivityResult(requestCode, resultCode, data)
+++        if (requestCode == REQUEST_CODE_PICK_BACKUP && resultCode == Activity.RESULT_OK) {
+++            val uri = data?.data ?: return
+++            // Read the selected file, validate header (version, salt), then attempt decrypt/import
+++            // If decrypt fails -> show informative dialog and do not overwrite current DB
+++            AlertDialog.Builder(this)
+++                .setTitle("استيراد النسخة الاحتياطية")
+++                .setMessage("تم اختيار ملف النسخة الاحتياطية. الرجاء إدخال كلمة السر لفك التشفير (إن وُجد).")
+++                .setPositiveButton("موافق") { _, _ ->
+++                    // call your import flow
+++                }
+++                .setNegativeButton("إلغاء", null)
+++                .show()
+++        }
+++    }
+++
+++    private fun showPasswordPrompt() {
+++        // Implement password dialog, then try importing
+++    }
+++
+++    private fun exportCurrentFileForAnalysis() {
+++        // Implement share intent logic to allow user to send the current encrypted file to support
+++    }
+++
+++    companion object {
+++        const val REQUEST_CODE_PICK_BACKUP = 5021
+++    }
+++}
++
++diff --git a/app/src/main/res/layout/activity_recovery.xml b/app/src/main/res/layout/activity_recovery.xml
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/res/layout/activity_recovery.xml
++ @@ -0,0 +1,32 @@
+++<?xml version="1.0" encoding="utf-8"?>
+++<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+++    android:id="@+id/recoveryRoot"
+++    android:layout_width="match_parent"
+++    android:layout_height="match_parent"
+++    android:orientation="vertical"
+++    android:padding="24dp">
+++
+++    <TextView
+++        android:id="@+id/recoveryTitle"
+++        android:layout_width="match_parent"
+++        android:layout_height="wrap_content"
+++        android:text="تعذّر قراءة بيانات التطبيق"
+++        android:textAppearance="?android:attr/textAppearanceLarge"
+++        android:paddingBottom="8dp"/>
+++
+++    <TextView
+++        android:id="@+id/recoveryDesc"
+++        android:layout_width="match_parent"
+++        android:layout_height="wrap_content"
+++        android:text="قد تكون النسخة المحلية تالفة أو كلمة السر غير صحيحة. اختر إجراءً لاستعادة بياناتك."
+++        android:paddingBottom="16dp"/>
+++
+++    <Button
+++        android:id="@+id/recoveryRestoreBtn"
+++        android:layout_width="match_parent"
+++        android:layout_height="wrap_content"
+++        android:text="استعادة من نسخة احتياطية" />
+++
+++    <Button
+++        android:id="@+id/recoveryTryPwdBtn"
+++        android:layout_width="match_parent"
+++        android:layout_height="wrap_content"
+++        android:text="جرب كلمة سر مختلفة"
+++        android:layout_marginTop="8dp"/>
+++
+++    <Button
+++        android:id="@+id/recoveryExportBtn"
+++        android:layout_width="match_parent"
+++        android:layout_height="wrap_content"
+++        android:text="تصدير النسخة الحالية للتحليل"
+++        android:layout_marginTop="8dp"/>
+++
+++</LinearLayout>
++
++diff --git a/PATCHES/دمج-PATCH.md b/PATCHES/دمج-PATCH.md
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/PATCHES/دمج-PATCH.md
++ @@ -0,0 +1,55 @@
+++ملف دمج التعديلات - دمج-PATCH.md
+++
+++ملخص سريع للدمج:
+++
+++1) المسارات المقترحة:
+++   - ضع SafeSaveHelper.kt تحت package: com.ma2i.water.util.safesave
+++   - ضع PasswordUtils.kt تحت: com.ma2i.water.security
+++   - ضع BackupCrypto.kt تحت: com.ma2i.water.backup
+++   - ضع RecoveryActivity.kt تحت: com.ma2i.water.ui.recovery
+++   - ضع layout res/layout/activity_recovery.xml
+++
+++2) تحديث build.gradle (module: app)
+++   - تأكد من وجود الاعتمادات:
+++     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3"
+++     implementation "androidx.security:security-crypto:1.1.0" // مستحسن
+++
+++3) رابط دمج SafeSaveHelper:
+++   - في أي Activity/Fragment/VM حيث تنفذ عملية الحفظ:
+++     a) عرض ProgressIndicator فور الضغط
+++     b) استدعاء SafeSaveHelper.safeSave(...) وتمرير suspend dbSave
+++     c) onSuccess: إخفاء المؤشر + إظهار رسالة نجاح
+++     d) onError: إظهار AlertDialog مع خيارات إعادة المحاولة/حفظ كمسودة/تصدير
+++
+++4) تخزين كلمة السر (PasswordUtils):
+++   - عند الإنشاء/التغيير: salt = PasswordUtils.generateSalt(); hash = PasswordUtils.hashPassword(password, salt)
+++   - خزّن hash و salt مشفّرين (EncryptedSharedPreferences أو DB مشفّر)
+++
+++5) تنسيق Backup file:
+++   - header JSON: { "version":1, "salt":"<base64>", "payload":"<base64_iv+ciphertext>" }
+++   - عند التصدير: اطلب كلمة سر -> deriveKey -> encryptToBase64 -> احفظ header+payload
+++   - عند الاستيراد: اقرأ header -> اطلب كلمة سر -> deriveKey -> decryptFromBase64 -> إذا فشل: لا تمسح DB واظهر RecoveryActivity
+++
+++6) اختبارات مقترحة:
+++   - PasswordUtils: اختبار hash و verify
+++   - BackupCrypto: اختبار encrypt -> decrypt roundtrip
+++   - SafeSaveHelper: اختبار نجاح وفشل (محاكاة IOException)
+++
+++7) ملاحظات:
+++   - قبل النشر: اطلب من المستخدمين عمل Export يدوياً كاحتياط.
+++   - اختبر سيناريوهات الترحيل بعناية.
++
++diff --git a/app/src/test/java/com/ma2i/water/tests/PasswordUtilsTest.kt b/app/src/test/java/com/ma2i/water/tests/PasswordUtilsTest.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/test/java/com/ma2i/water/tests/PasswordUtilsTest.kt
++ @@ -0,0 +1,29 @@
+++package com.ma2i.water.tests
+++
+++import org.junit.Assert.assertEquals
+++import org.junit.Test
+++
+++class PasswordUtilsTest {
+++
+++    @Test
+++    fun hashAndVerify_samePassword() {
+++        val password = "testPass123".toCharArray()
+++        val salt = com.ma2i.water.security.PasswordUtils.generateSalt()
+++        val hash = com.ma2i.water.security.PasswordUtils.hashPassword(password, salt)
+++        val verified = com.ma2i.water.security.PasswordUtils.verifyPassword(password, hash, salt)
+++        assertEquals(true, verified)
+++    }
+++
+++    @Test
+++    fun hash_differentSaltsProduceDifferentHashes() {
+++        val password = "password".toCharArray()
+++        val salt1 = com.ma2i.water.security.PasswordUtils.generateSalt()
+++        val salt2 = com.ma2i.water.security.PasswordUtils.generateSalt()
+++        val hash1 = com.ma2i.water.security.PasswordUtils.hashPassword(password, salt1)
+++        val hash2 = com.ma2i.water.security.PasswordUtils.hashPassword(password, salt2)
+++        assertEquals(false, hash1 == hash2)
+++    }
+++}
++
++diff --git a/app/src/test/java/com/ma2i/water/tests/BackupCryptoTest.kt b/app/src/test/java/com/ma2i/water/tests/BackupCryptoTest.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/test/java/com/ma2i/water/tests/BackupCryptoTest.kt
++ @@ -0,0 +1,28 @@
+++package com.ma2i.water.tests
+++
+++import org.junit.Assert.assertArrayEquals
+++import org.junit.Test
+++
+++class BackupCryptoTest {
+++
+++    @Test
+++    fun encryptDecrypt_roundTrip() {
+++        val plain = "{\"hello\":\"world\"}".toByteArray(Charsets.UTF_8)
+++        val password = "backup-pass".toCharArray()
+++        val salt = com.ma2i.water.backup.BackupCrypto.generateSalt()
+++        val key = com.ma2i.water.backup.BackupCrypto.deriveKey(password, salt)
+++        val payload = com.ma2i.water.backup.BackupCrypto.encryptToBase64(plain, key)
+++        val decrypted = com.ma2i.water.backup.BackupCrypto.decryptFromBase64(payload, key)
+++        assertArrayEquals(plain, decrypted)
+++    }
+++}
++
++diff --git a/app/src/main/java/com/ma2i/water/data/model/Sale.kt b/app/src/main/java/com/ma2i/water/data/model/Sale.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/data/model/Sale.kt
++ @@ -0,0 +1,9 @@
+++package com.ma2i.water.data.model
+++
+++import java.io.Serializable
+++
+++// Simple data model for a Sale. Adapt fields to your real entity.
+++data class Sale(
+++    val id: Long = 0,
+++    val customerId: Long,
+++    val amount: Double,
+++    val note: String? = null
+++) : Serializable
++
++diff --git a/app/src/main/java/com/ma2i/water/data/repository/SaleRepository.kt b/app/src/main/java/com/ma2i/water/data/repository/SaleRepository.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/data/repository/SaleRepository.kt
++ @@ -0,0 +1,11 @@
+++package com.ma2i.water.data.repository
+++
+++import com.ma2i.water.data.model.Sale
+++
+++/**
+++ * Repository interface used by the example ViewModel.
+++ * Implement this in your codebase to call DAO/Room.
+++ */
+++interface SaleRepository {
+++    suspend fun saveSale(sale: Sale)
+++}
++
++diff --git a/app/src/main/java/com/ma2i/water/ui/sales/ExampleSaleViewModel.kt b/app/src/main/java/com/ma2i/water/ui/sales/ExampleSaleViewModel.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/ui/sales/ExampleSaleViewModel.kt
++ @@ -0,0 +1,77 @@
+++package com.ma2i.water.ui.sales
+++
+++import androidx.lifecycle.LiveData
+++import androidx.lifecycle.MutableLiveData
+++import androidx.lifecycle.ViewModel
+++import androidx.lifecycle.viewModelScope
+++import com.ma2i.water.data.model.Sale
+++import com.ma2i.water.data.repository.SaleRepository
+++import com.ma2i.water.util.safesave.SafeSaveHelper
+++
+++/**
+++ * Example ViewModel showing how to call SafeSaveHelper from a ViewModel (MVVM).
+++ * The ViewModel exposes a LiveData<SaveState> that the Activity observes to update the UI.
+++ */
+++class ExampleSaleViewModel(private val repository: SaleRepository) : ViewModel() {
+++
+++    sealed class SaveState {
+++        object Idle : SaveState()
+++        object Saving : SaveState()
+++        object Success : SaveState()
+++        data class Error(val message: String) : SaveState()
+++    }
+++
+++    private val _saveState = MutableLiveData<SaveState>(SaveState.Idle)
+++    val saveState: LiveData<SaveState> = _saveState
+++
+++    fun saveSale(sale: Sale) {
+++        _saveState.value = SaveState.Saving
+++        // Use SafeSaveHelper safely inside ViewModelScope.
+++        SafeSaveHelper.safeSave(
+++            scope = viewModelScope,
+++            dbSave = {
+++                // Delegate to repository; this should be a suspend function that writes to DB
+++                repository.saveSale(sale)
+++            },
+++            fileSave = null, // optional: e.g., backupManager.maybeAutoBackup()
+++            onSuccess = {
+++                // Post success state
+++                _saveState.postValue(SaveState.Success)
+++            },
+++            onError = { throwable ->
+++                _saveState.postValue(SaveState.Error(throwable.message ?: "حدث خطأ أثناء الحفظ"))
+++            }
+++        )
+++    }
+++
+++    fun resetState() {
+++        _saveState.value = SaveState.Idle
+++    }
+++}
++
++diff --git a/app/src/main/java/com/ma2i/water/ui/sales/ExampleSaleActivity.kt b/app/src/main/java/com/ma2i/water/ui/sales/ExampleSaleActivity.kt
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/java/com/ma2i/water/ui/sales/ExampleSaleActivity.kt
++ @@ -0,0 +1,216 @@
+++package com.ma2i.water.ui.sales
+++
+++import android.os.Bundle
+++import android.view.View
+++import android.widget.Button
+++import android.widget.EditText
+++import android.widget.ProgressBar
+++import android.widget.Toast
+++import androidx.activity.viewModels
+++import androidx.appcompat.app.AlertDialog
+++import androidx.appcompat.app.AppCompatActivity
+++import androidx.lifecycle.ViewModelProvider
+++import com.ma2i.water.R
+++import com.ma2i.water.data.model.Sale
+++import com.ma2i.water.data.repository.SaleRepository
+++
+++/**
+++ * Example Activity demonstrating how to wire UI to the ExampleSaleViewModel and respond to SaveState.
+++ * Your real Activity should replace the simple input fields with the actual form used in the app.
+++ */
+++class ExampleSaleActivity : AppCompatActivity() {
+++
+++    // You need to provide a real implementation of SaleRepository via a factory or DI.
+++    private val repository: SaleRepository by lazy {
+++        // TODO: Replace with actual repository e.g. AppContainer.saleRepository
+++        object : SaleRepository {
+++            override suspend fun saveSale(sale: Sale) {
+++                // No-op for example. Real impl writes to DB via DAO.
+++            }
+++        }
+++    }
+++
+++    private val viewModel: ExampleSaleViewModel by lazy {
+++        // If you use a ViewModelFactory, supply repository properly.
+++        ViewModelProvider(this, object : ViewModelProvider.Factory {
+++            override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+++                @Suppress("UNCHECKED_CAST")
+++                return ExampleSaleViewModel(repository) as T
+++            }
+++        }).get(ExampleSaleViewModel::class.java)
+++    }
+++
+++    private lateinit var amountInput: EditText
+++    private lateinit var customerIdInput: EditText
+++    private lateinit var noteInput: EditText
+++    private lateinit var saveBtn: Button
+++    private lateinit var progress: ProgressBar
+++
+++    override fun onCreate(savedInstanceState: Bundle?) {
+++        super.onCreate(savedInstanceState)
+++        setContentView(R.layout.activity_sale)
+++
+++        amountInput = findViewById(R.id.inputAmount)
+++        customerIdInput = findViewById(R.id.inputCustomerId)
+++        noteInput = findViewById(R.id.inputNote)
+++        saveBtn = findViewById(R.id.btnSave)
+++        progress = findViewById(R.id.saveProgress)
+++
+++        saveBtn.setOnClickListener {
+++            val amount = amountInput.text.toString().toDoubleOrNull() ?: 0.0
+++            val customerId = customerIdInput.text.toString().toLongOrNull() ?: 0L
+++            val note = noteInput.text.toString().takeIf { it.isNotBlank() }
+++            val sale = Sale(customerId = customerId, amount = amount, note = note)
+++
+++            // Disable UI and show progress immediately
+++            saveBtn.isEnabled = false
+++            progress.visibility = View.VISIBLE
++
+++            viewModel.saveSale(sale)
+++        }
++
+++        viewModel.saveState.observe(this) { state ->
+++            when (state) {
+++                is ExampleSaleViewModel.SaveState.Idle -> {
+++                    progress.visibility = View.GONE
+++                    saveBtn.isEnabled = true
+++                }
+++                is ExampleSaleViewModel.SaveState.Saving -> {
+++                    progress.visibility = View.VISIBLE
+++                    saveBtn.isEnabled = false
+++                }
+++                is ExampleSaleViewModel.SaveState.Success -> {
+++                    progress.visibility = View.GONE
+++                    saveBtn.isEnabled = true
+++                    Toast.makeText(this, "تم الحفظ بنجاح", Toast.LENGTH_SHORT).show()
+++                    // navigate back or clear form
+++                    finish()
+++                }
+++                is ExampleSaleViewModel.SaveState.Error -> {
+++                    progress.visibility = View.GONE
+++                    saveBtn.isEnabled = true
+++                    showSaveErrorDialog(state.message)
+++                }
+++            }
+++        }
+++    }
++
+++    private fun showSaveErrorDialog(message: String) {
+++        AlertDialog.Builder(this)
+++            .setTitle("خطأ أثناء الحفظ")
+++            .setMessage(message)
+++            .setPositiveButton("إعادة المحاولة") { _, _ ->
+++                // user can attempt save again - leave form values intact
+++            }
+++            .setNeutralButton("حفظ كمسودة") { _, _ ->
+++                // Optionally save draft locally (SharedPreferences / local file). Implement as needed.
+++                Toast.makeText(this, "تم حفظ المسودة محليًا", Toast.LENGTH_SHORT).show()
+++            }
+++            .setNegativeButton("تصدير للنسخ الاحتياطي") { _, _ ->
+++                // Launch export flow so user can save current input as external backup
+++                // Implement export logic as needed
+++            }
+++            .show()
+++    }
+++}
++
++diff --git a/app/src/main/res/layout/activity_sale.xml b/app/src/main/res/layout/activity_sale.xml
++new file mode 100644
++index 0000000..0000000
++--- /dev/null
+++++ b/app/src/main/res/layout/activity_sale.xml
++ @@ -0,0 +1,40 @@
+++<?xml version="1.0" encoding="utf-8"?>
+++<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+++    android:layout_width="match_parent"
+++    android:layout_height="match_parent"
+++    android:padding="16dp">
+++
+++    <LinearLayout
+++        android:layout_width="match_parent"
+++        android:layout_height="wrap_content"
+++        android:orientation="vertical">
+++
+++        <EditText
+++            android:id="@+id/inputCustomerId"
+++            android:layout_width="match_parent"
+++            android:layout_height="wrap_content"
+++            android:hint="Customer ID" />
+++
+++        <EditText
+++            android:id="@+id/inputAmount"
+++            android:layout_width="match_parent"
+++            android:layout_height="wrap_content"
+++            android:hint="Amount"
+++            android:inputType="numberDecimal" />
+++
+++        <EditText
+++            android:id="@+id/inputNote"
+++            android:layout_width="match_parent"
+++            android:layout_height="wrap_content"
+++            android:hint="Note (optional)" />
+++
+++        <Button
+++            android:id="@+id/btnSave"
+++            android:layout_width="match_parent"
+++            android:layout_height="wrap_content"
+++            android:text="Save"
+++            android:layout_marginTop="12dp" />
+++
+++        <ProgressBar
+++            android:id="@+id/saveProgress"
+++            android:layout_width="wrap_content"
+++            android:layout_height="wrap_content"
+++            android:visibility="gone"
+++            android:layout_gravity="center"
+++            style="?android:attr/progressBarStyleLarge"
+++            android:layout_marginTop="12dp"/>
+++
+++    </LinearLayout>
+++</ScrollView>
++
+*** End Patch
