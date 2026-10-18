@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/recoveryRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView
+        android:id="@+id/recoveryTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="تعذّر قراءة بيانات التطبيق"
+        android:textAppearance="?android:attr/textAppearanceLarge"
+        android:paddingBottom="8dp"/>
+
+    <TextView
+        android:id="@+id/recoveryDesc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="قد تكون النسخة المحلية تالفة أو كلمة السر غير صحيحة. اختر إجراءً لاستعادة بياناتك."
+        android:paddingBottom="16dp"/>
+
+    <Button
+        android:id="@+id/recoveryRestoreBtn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="استعادة من نسخة احتياطية" />
+
+    <Button
+        android:id="@+id/recoveryTryPwdBtn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="جرب كلمة سر مختلفة"
+        android:layout_marginTop="8dp"/>
+
+    <Button
+        android:id="@+id/recoveryExportBtn"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="تصدير النسخة الحالية للتحليل"
+        android:layout_marginTop="8dp"/>
+
+</LinearLayout>
