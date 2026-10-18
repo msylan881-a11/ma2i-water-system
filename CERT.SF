@@ -1,0 +1,89 @@
+Signature-Version: 1.0
+Created-By: Android Gradle 8.13.1
+SHA-256-Digest-Manifest: xeAL2QG9MNY2FBkysbJ8Dytr7zQGOO58+fpXV7Ejozs=
+X-Android-APK-Signed: 2
+
+Name: AndroidManifest.xml
+SHA-256-Digest: dXzSDwO3hKl+vbT5D1OJV7pCKynJ6twqoMKyygu2D0g=
+
+Name: META-INF/com/android/build/gradle/app-metadata.properties
+SHA-256-Digest: NbzyECh9rAh0Pm7wEpmcz3WJLfvq+lrggOee9mStALM=
+
+Name: META-INF/version-control-info.textproto
+SHA-256-Digest: bGPYrKSsmb5tpmtltqs82gWayRJtXwCM3VXJFk8mnb8=
+
+Name: assets/apple-touch-icon.png
+SHA-256-Digest: z0JOpwZpKUf9rpbELQQG6lpkt65RF/mbTXDptrRXVZk=
+
+Name: assets/icon-192.png
+SHA-256-Digest: gRjKL+wIgNs/xOcOBV16JR4Ed47usN5Spj5Cw+9hQYU=
+
+Name: assets/icon-512.png
+SHA-256-Digest: Ud5vs5lWNvAMYfCcunNKo+Hj32H9i6wHauGQ+FCVdck=
+
+Name: assets/index.html
+SHA-256-Digest: Uf/M6WDLZWK+KPU9/BKpr4UCaZKy2Mvsw+rXpUXCuGg=
+
+Name: assets/manifest.json
+SHA-256-Digest: WdeRjqCWGkU3eofMpeZoWesfT6dtiDJguKFGnkYlHMo=
+
+Name: assets/privacy-policy.html
+SHA-256-Digest: H42h6utoT3+z9eXt4YnCuBl4FprocfIUmBj1aiCdfD8=
+
+Name: classes.dex
+SHA-256-Digest: 4bEGz+stg10eNgKgfbD27m2fHvfFAxcmHk8pPe/dbDQ=
+
+Name: res/0K.xml
+SHA-256-Digest: z6+rjtHCukbqxRV3mFug/N+S161sDJ4b+y+BBNlQJZY=
+
+Name: res/1S.xml
+SHA-256-Digest: jISfDEYyvDneTC73BQUHD3TJAI4ZIaayIQqcsWq6uHc=
+
+Name: res/4j.xml
+SHA-256-Digest: JM7pZQDjzAYhpQM6JjQUzGbG7Yn1/5+RMJqCgTWpg9c=
+
+Name: res/5J.xml
+SHA-256-Digest: u+SLmfS7SWxxaCzhtnUfiveeCQoDGDl0CBmQN71F8Xc=
+
+Name: res/9w.png
+SHA-256-Digest: pRRC1/XC7unrTwAlt1IyCWFUA+4m+1djmJgqnmtsJNg=
+
+Name: res/BW.xml
+SHA-256-Digest: eI/HWNgTl8sp3UBqbcf86TXfPRt6qHDBEneTgKKS+0E=
+
+Name: res/FS.png
+SHA-256-Digest: DXD4HPu13QgUrFDJETI9B7QGEP2lQT++jesgzYRUCMI=
+
+Name: res/N3.png
+SHA-256-Digest: /nYZGNjLUeWbut4rWHlL1TZwSyFk9ZB64PHW/fh5Ot8=
+
+Name: res/Qq.xml
+SHA-256-Digest: O5aY6XF2k1UYvGbz7Z4bEXH1e3No1gEQqPpK/KaeWWs=
+
+Name: res/RJ.png
+SHA-256-Digest: wkYO07tEfDtP0bq56gSlnmSvz8HG++Hwe1ZDx6rVgDU=
+
+Name: res/RY.xml
+SHA-256-Digest: lPE2L4ZmOwSmzjWP/BiN+LSjlJXZHKS4yF8DHyZuRIM=
+
+Name: res/Wf.xml
+SHA-256-Digest: 0ZVtZLZmR2go20pxknV92JHAooRRqMX1eHsOi0aEjZI=
+
+Name: res/di.xml
+SHA-256-Digest: kvgxjJ+mzWV4FUDAIjXP/kDovWhQoRgrsd76Cv2b4Xw=
+
+Name: res/ey.xml
+SHA-256-Digest: 0l/kLxqOLaRDGJHhASbmJ1Sx41jdE+CNA/jalp7AWxo=
+
+Name: res/l8.xml
+SHA-256-Digest: aaKvpThqXjt6pIHh52lWLEVtDREthJ+/Gym/HWjY4as=
+
+Name: res/o-.png
+SHA-256-Digest: NtxnxS/ObBexMz2xMc5MMirRIlvho3HeEuqX+fshpoE=
+
+Name: res/yn.png
+SHA-256-Digest: f8DuJcBWNa3LcYSdbL1SaOjMtD4DNvozlDJLhnx94Sg=
+
+Name: resources.arsc
+SHA-256-Digest: 66JbPVFEKTD27SB5Bvtz2PzQMqtg15qpY+SVUr+gYmY=
+
